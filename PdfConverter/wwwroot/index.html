@@ -1,0 +1,161 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF Converter</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.17"></script>
+  <style>
+    body { margin: 0; background: radial-gradient(ellipse at top, #e0edff, #f4f7fc 65%); color: #18253b; font-family: system-ui, sans-serif; }
+    .shell { min-height: 100svh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    .card { width: 100%; max-width: 530px; box-sizing: border-box; background: white; border: 1px solid #e1e8f3; border-radius: 24px; padding: clamp(22px, 6vw, 40px); box-shadow: 0 24px 70px #334f7622; }
+    .zone { display: grid; place-items: center; gap: 8px; width: 100%; padding: 28px 12px; border: 2px dashed #9ab7e9; border-radius: 16px; background: #f4f8ff; cursor: pointer; color: #173d82; font: inherit; }
+    .zone:is(:hover, .dragging):not(:disabled) { background: #e7f0ff; border-color: #285dc0; }
+    button:focus-visible { outline: 3px solid #3879eb; outline-offset: 4px; }
+    .action { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; background: #2155bc; color: white; border: 0; border-radius: 12px; padding: 14px; font: inherit; font-weight: 650; cursor: pointer; }
+    .action:hover:not(:disabled) { background: #183f91; }
+    button:disabled { opacity: .58; cursor: default; }
+    .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #ffffff60; border-top-color: white; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="card" aria-labelledby="title">
+      <header class="mb-7 text-center">
+        <h1 id="title" class="text-3xl font-bold tracking-tight">PDF Converter</h1>
+        <p class="mt-2 text-slate-600">Combine JPG or PNG images into one PDF, or convert a plain text file.</p>
+      </header>
+
+      <input id="files" type="file" accept=".jpg,.jpeg,.png,.txt" multiple hidden>
+      <button id="zone" class="zone" type="button" aria-describedby="limits">
+        <span class="rounded-xl bg-blue-100 px-3 py-2 text-xs font-bold tracking-wide" aria-hidden="true">PDF</span>
+        <strong>Drop files here or browse</strong>
+        <span class="text-sm">JPG, PNG, or TXT</span>
+      </button>
+      <p id="limits" class="mt-2 text-center text-sm text-slate-600">Up to 10 images and 25 MB total, or one TXT up to 64 KB.</p>
+
+      <div id="selection" class="mt-5 rounded-xl bg-slate-50 px-4 py-3" hidden>
+        <p id="count" class="mb-1 text-sm font-semibold"></p>
+        <ol id="names" class="list-decimal space-y-1 pl-5 text-sm text-slate-700 [overflow-wrap:anywhere]"></ol>
+      </div>
+
+      <p id="error" class="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800" role="alert" hidden></p>
+      <p id="status" class="text-sm text-emerald-800" role="status"></p>
+      <button id="convert" class="action mt-5" type="button" disabled>
+        <span id="spinner" class="spinner" aria-hidden="true" hidden></span>
+        <span id="button-label">Convert to PDF</span>
+      </button>
+    </section>
+  </main>
+  <script>
+    const input = document.querySelector('#files');
+    const zone = document.querySelector('#zone');
+    const convert = document.querySelector('#convert');
+    const error = document.querySelector('#error');
+    const status = document.querySelector('#status');
+    const spinner = document.querySelector('#spinner');
+    const label = document.querySelector('#button-label');
+    const selection = document.querySelector('#selection');
+    const count = document.querySelector('#count');
+    const names = document.querySelector('#names');
+    let files = [];
+    let busy = false;
+
+    function showError(message = '') {
+      error.textContent = message;
+      error.hidden = !message;
+    }
+
+    function validate(selected) {
+      if (!selected.length || selected.length > 10) return 'Choose up to 10 JPG or PNG images, or one TXT file.';
+      if (selected.some(file => !file.size)) return 'One of the selected files is empty.';
+      if (selected.length === 1 && /\.txt$/i.test(selected[0].name)) {
+        return selected[0].size > 64 * 1024 ? 'Choose a TXT file no larger than 64 KB.' : '';
+      }
+      if (selected.some(file => !/\.(jpe?g|png)$/i.test(file.name))) {
+        return 'Choose JPG or PNG images together, or convert one TXT file separately.';
+      }
+      return selected.reduce((total, file) => total + file.size, 0) > 25 * 1024 * 1024
+        ? 'The upload is too large. Choose up to 25 MB of files.' : '';
+    }
+
+    function select(selected) {
+      if (busy) return;
+      status.textContent = '';
+      const invalid = validate(selected);
+      showError(invalid);
+      files = invalid ? [] : selected;
+      names.replaceChildren();
+      for (const file of files) {
+        const item = document.createElement('li');
+        item.textContent = file.name;
+        names.append(item);
+      }
+      count.textContent = files.length === 1 ? 'Selected file' : 'Selected files in PDF page order';
+      selection.hidden = !files.length;
+      convert.disabled = !files.length;
+    }
+
+    zone.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      if (input.files.length) select(Array.from(input.files));
+      input.value = '';
+    });
+    document.addEventListener('dragover', event => event.preventDefault());
+    document.addEventListener('drop', event => event.preventDefault());
+    zone.addEventListener('dragover', () => {
+      if (!busy) zone.classList.add('dragging');
+    });
+    zone.addEventListener('dragleave', event => {
+      if (!zone.contains(event.relatedTarget)) zone.classList.remove('dragging');
+    });
+    zone.addEventListener('drop', event => {
+      zone.classList.remove('dragging');
+      select(Array.from(event.dataTransfer.files));
+    });
+
+    convert.addEventListener('click', async () => {
+      if (busy || !files.length) return;
+      busy = zone.disabled = convert.disabled = true;
+      showError();
+      status.textContent = 'Converting your files…';
+      spinner.hidden = false;
+      label.textContent = 'Converting…';
+
+      try {
+        const form = new FormData();
+        for (const file of files) form.append('files', file);
+        const response = await fetch('/api/convert', { method: 'POST', body: form });
+        const contentType = response.headers.get('content-type') || '';
+        if (!response.ok || !contentType.includes('application/pdf')) {
+          const details = contentType.includes('application/json') ? await response.json() : {};
+          showError(details.message || (response.status === 413
+            ? 'The upload is too large. Choose up to 25 MB of files.'
+            : 'Conversion failed. Please try again.'));
+          status.textContent = '';
+          return;
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = /\.txt$/i.test(files[0].name) ? 'text.pdf' : 'images.pdf';
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        status.textContent = 'Your PDF is ready. Check your downloads.';
+      } catch {
+        status.textContent = '';
+        showError('The converter could not be reached. Check the connection and try again.');
+      } finally {
+        busy = zone.disabled = convert.disabled = false;
+        spinner.hidden = true;
+        label.textContent = 'Convert to PDF';
+      }
+    });
+  </script>
+</body>
+</html>
